@@ -66,6 +66,7 @@ export async function register(req, res) {
   }
 }
 
+
 export async function login(req, res) {
   const { email, password } = req.body;
 
@@ -105,9 +106,28 @@ export async function login(req, res) {
     res.status(500).json({ error: "Error interno del servidor" });
   }
 }
-export async function logout(req, res) {
+export async function logout(_req, res) {
+  res.cookie("token", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0, // 0 milisegundos
+    path: "/"
+  })
 
+  res.json({ success: true });
 }
-export async function me(req, res) {
 
+
+export async function me(req, res) {
+  if (!req.user) {
+    return res.status(401).json({ error: "No autorizado" });
+  }
+
+  const user = await User.findById(req.user.userId).select("-password")
+  if (!user) {
+    return res.status(404).json({ error: "Usuario no encontrado" })
+  }
+
+  res.json({ user })
 }
