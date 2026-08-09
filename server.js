@@ -7,7 +7,7 @@ import authRouter from "./routes/authRoutes.js";
 
 const app = express();
 
-connectToDatabase()
+await connectToDatabase()
 
 app.use(cors({ origin: process.env.ORIGINS.split(','), credentials: true }))
 app.use(cookieParser())
