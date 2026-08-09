@@ -85,7 +85,39 @@ export async function listProjects(req, res) {
 // GET /api/projects/:id
 // Get full project details
 export async function getProject(req, res) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
 
+  const project = await Project.findOne({
+    _id: req.params.id,
+    ownerId: req.user.userId,
+  });
+
+  if (!project) {
+    return res.status(404).json({ message: 'Project not found' });
+  }
+
+  const filesObj = {};
+  for (const [path, entry] of Object.entries(project.files)) { // create files object with only content
+    filesObj[path] = entry.content;
+  }
+
+  res.json({
+    _id: project._id,
+    name: project.name,
+    description: project.description,
+    files: filesObj,
+    messages: project.messages,
+    version: project.version,
+    status: project.status,
+    filesPlanned: project.filesPlanned,
+    filesGenerated: project.filesGenerated,
+    currentFile: project.currentFile,
+    error: project.error,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  });
 }
 
 // DELETE /api/projects/:id
