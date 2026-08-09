@@ -60,10 +60,6 @@ export async function createProject(req, res) {
       createdAt: project.createdAt,
     }
   });
-
-
-
-
 }
 
 // Background worker to progressive generate files and update database in real-time
@@ -74,7 +70,16 @@ async function runBackgroundGeneration(projectId, prompt) {
 // GET /api/projects
 // List all projects owned by the user (Summary only, no files content)
 export async function listProjects(req, res) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
 
+  const projects = await Project.find(
+    { ownerId: req.user.userId },
+    { name: 1, description: 1, version: 1, createdAt: 1, updatedAt: 1 }
+  ).sort({ updatedAt: -1 });
+
+  res.json(projects);
 }
 
 // GET /api/projects/:id
