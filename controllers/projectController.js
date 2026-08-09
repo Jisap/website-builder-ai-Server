@@ -1,9 +1,68 @@
-
+import { Project } from "../models/Projects.js"
 
 
 // POST /api/projects
 // Create a new project from an AI prompt.
 export async function createProject(req, res) {
+  const { prompt } = req.body;
+  if (!prompt || typeof prompt !== "string") {
+    return res.status(400).json({ message: 'Prompt is required' });
+  }
+
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  // Create project in DB inmmediately with "pending" status
+  const project = await Project.create({
+    name: "Planning project...",
+    description: prompt,
+    files: {},
+    messages: [
+      {
+        role: "user",
+        content: prompt
+      },
+      {
+        role: "assistant",
+        content: "Planning project structure..."
+      }
+    ],
+    version: 0,
+    ownerId: req.user.userId,
+    status: "pending",
+    filesPlanned: [],
+    filesGenerated: [],
+    currentFile: [],
+    error: null,
+  });
+
+  // Start background generation
+  runBackgroundGeneration(project._id.toString(), prompt)
+    .catch(error => {
+      console.error(`[Background AI] Fatal generation error for project ${project._id}`, error);
+    })
+
+  res.status(201).json({
+    message: 'Project created successfully',
+    project: {
+      _id: project._id,
+      name: project.name,
+      description: project.description,
+      files: {},
+      messages: project.messages,
+      version: project.version,
+      status: project.status,
+      filesPlanned: project.filesPlanned,
+      filesGenerated: project.filesGenerated,
+      currentFile: project.currentFile,
+      error: project.error,
+      createdAt: project.createdAt,
+    }
+  });
+
+
+
 
 }
 
