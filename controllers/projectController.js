@@ -219,5 +219,27 @@ export async function publishProject(req, res) {
 // GET /api/projects/oublic/:id
 // Get a publicy published project details (without auth)
 export async function getPublicProject(req, res) {
+  const project = await project.findByid(req.params.id)
+  if (!project) {
+    res.status(404).json({ message: "Project not found" });
+    return;
+  }
 
+  if (!project.published) {
+    res.status(403).json({ message: "Project is not published yet." });
+    return;
+  }
+
+  const filesObj = {};
+  for (const [path, entry] of Object.entries(project.files)) { // creamos un nuevo objeto con solo el contenido 
+    filesObj[path] = entry.content;
+  }
+
+  res.json({
+    _id: project._id,
+    name: project.name,
+    description: project.description,
+    files: filesObj,
+    version: project.version,
+  })
 }
