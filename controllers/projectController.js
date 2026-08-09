@@ -1,4 +1,9 @@
 import { Project } from "../models/Projects.js"
+import crypto from "crypto"
+
+function hashContent(content) {
+  return crypto.createHash("md5").update(content).digest("hex").slice(0, 12)
+}
 
 
 // POST /api/projects
@@ -142,6 +147,52 @@ export async function deleteProject(req, res) {
 // PUT /api/projects/:id/files
 // Update project files (manual edits)
 export async function updateProjectFiles(req, res) {
+  const files = req.body;
+  if (!files || typeof files !== "object") {
+    res.status(400).json({ error: "files object is required" })
+    return
+  }
+
+  if (!req.user) {
+    res.status(401).json({ message: "Unauthorized" })
+    return
+  }
+
+  const project = await Project.findOne({
+    _id: req.params.id,
+    ownerId: req.user.userId,
+  })
+
+  if (!project) {
+    return res.status(404).json({ message: 'Project not found' });
+  }
+
+  // Rebuild project files
+  const newFiles = {};
+  for (const [path, content] of Object.entries(files)) { // Creamos un nuevo objeto con los archivos y su hash {path: {content, hash}}
+    if (typeof content === "string") {
+      newFiles[path] = { content, hash: hashContent(content) }
+    }
+  }
+  project.files = newFiles;
+  await project.save(); // Actualizamos el proyecto en la base de datos                                           
+
+  const filesObj = {};
+  for (const [path, entry] of Object.entries(project.files)) { //{path: contenido} sin el hash 
+    if (typeof entry.content === "string") {
+      filesObj[path] = entry.content;
+    }
+  }
+
+  res.json({
+    _id: project._id,
+    name: project.name,
+    description: project.description,
+    files: filesObj,
+    messages: project.messages,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt
+  })
 
 }
 
