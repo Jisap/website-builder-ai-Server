@@ -123,7 +123,20 @@ export async function getProject(req, res) {
 // DELETE /api/projects/:id
 // Delete a project 
 export async function deleteProject(req, res) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
 
+  const result = await Project.findOneAndDelete({
+    _id: req.params.id,
+    ownerId: req.user.userId,
+  });
+
+  if (!result) {
+    return res.status(404).json({ message: 'Project not found' });
+  }
+
+  res.json({ success: true });
 }
 
 // PUT /api/projects/:id/files
