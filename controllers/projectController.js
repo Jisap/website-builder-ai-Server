@@ -199,7 +199,21 @@ export async function updateProjectFiles(req, res) {
 // POST /api/projects/:id/publish
 // Mark a project as publicy published
 export async function publishProject(req, res) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
 
+  const project = await Project.findOneAndUpdate(
+    { _id: req.params.id, ownerId: req.user.userId },
+    { status: "published" },
+    { returnDocument: "after" }
+  );
+
+  if (!project) {
+    return res.status(404).json({ message: "Project not found" });
+  }
+
+  res.json({ success: true, published: project.published });
 }
 
 // GET /api/projects/oublic/:id
