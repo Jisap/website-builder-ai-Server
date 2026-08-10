@@ -68,17 +68,41 @@ export async function createProject(req, res) {
   });
 }
 
-// Background worker to progressive generate files and update database in real-time
+/**
+ * Worker en segundo plano que orquesta la generación progresiva de un proyecto.
+ * Actúa como puente entre el generador de IA y la base de datos, persistiendo
+ * el estado en tiempo real para que el frontend pueda mostrar progreso.
+ * 
+ * @param {string} projectId - ID del documento en MongoDB
+ * @param {string} prompt - Solicitud del usuario para generar el proyecto
+ */
+
+// ai.js (generateProject)          runBackgroundGeneration (controller)
+// ─────────────────────            ─────────────────────────────────────
+// Fase 1: IA genera plan    ───►   onPlan(plan)        → Guarda estructura en BD
+// Fase 2: Archivo inicia    ───►   onFileStart(path)   → Actualiza indicador UI
+// Fase 2: Archivo termina   ───►   onFileComplete(p,c) → Persiste código + hash
+// Fin: Todo OK              ───►   (retorno de result) → Marca status "completed"
+// Error: Algo falló         ───►   (catch del try)     → Marca status "failed"
+
 async function runBackgroundGeneration(projectId, prompt) {
   try {
     console.log(`[Background AI] Starting generation for project ${projectId}`);
 
+    // Se invoca generateProject inyectando callbacks que persisten cada evento en BD.
+    // Esto permite que el frontend haga polling/escuche cambios sin esperar al final.
     const result = await generateProject(prompt, {
+
+      /**
+       * FASE 1: El plan está listo.
+       * Actualiza el proyecto con la estructura planeada y cambia el estado a "generating".
+       * Usa $push para añadir un mensaje al historial de chat de forma atómica.
+       */
       onPlan: async (plan) => {
         console.log(`[Background AI] Plan created for project ${projectId}. Planned ${plan.files.length} files`);
-        const fileList = plan.files.map((f) => `- \`${f.path}\`: ${f.description}`).join("\n");
+        const fileList = plan.files.map((f) => `- \`${f.path}\`: ${f.description}`).join("\n"); // Formato de lista para el mensaje de chat
 
-        await Project.findByIdAndUpdate(projectId, {
+        await Project.findByIdAndUpdate(projectId, {       // Actualiza el proyecto con la estructura planeada y cambia el estado a "generating". Usa $push para añadir un mensaje al historial de chat de forma atómica.
           name: plan.projectName || "Generated Project",
           status: "generating",
           filesPlanned: plan.files,
@@ -89,52 +113,74 @@ async function runBackgroundGeneration(projectId, prompt) {
               timestamp: new Date(),
             }
           }
-        })
+        });
       },
+
+      /**
+       * FASE 2a: Un archivo empieza a generarse.
+       * Solo actualiza currentFile para que la UI muestre qué se está procesando.
+       * Operación ligera intencionalmente para no saturar la BD durante alta concurrencia.
+       */
       onFileStart: async (path) => {
-        console.log(`[Background AI] Starting file ${path} for project ${projectId}`)
+        console.log(`[Background AI] Starting file ${path} for project ${projectId}`);
         await Project.findByIdAndUpdate(projectId, {
           currentFile: path,
-        })
+        });
       },
-      onFileComplete: async (patt, code) => {
-        console.log(`[Background AI] Finished file ${path} for project ${projectId}`)
-        const project = await Project.findById(projectId);
 
-        if (project) {
-          project.files = project.files || {};
-          project.files[path] = { content: code, hash: hashContent(code) };
-          project.filesGenerated = [...(project.filesGenerated || []), path]
+      /**
+       * FASE 2b: Un archivo se generó exitosamente.
+       * IMPORTANTE: Usa findById + save() en lugar de findByIdAndUpdate porque
+       * necesita leer-actualizar-escribir el objeto 'files' (que es dinámico)
+       * y el array 'filesGenerated'. markModified() fuerza a Mongoose a detectar
+       * cambios en objetos anidados tipo Mixed/Object.
+       */
+      onFileComplete: async (path, code) => {
+        console.log(`[Background AI] Finished file ${path} for project ${projectId}`);
+        const project = await Project.findById(projectId); // Busca el documento en BD
+
+        if (project) {                                                        // Si el proyecto existe
+          project.files = project.files || {};                                // project.files se inicializa si es null o undefined. En MongoDB, un documento nuevo no tiene campos hasta que se escriben. 
+          project.files[path] = { content: code, hash: hashContent(code) };   // Se añade el archivo al objeto files
+          project.filesGenerated = [...(project.filesGenerated || []), path]; // Se añade el archivo al array filesGenerated
           project.messages.push({
             role: "assistant",
             content: `Created file "${path}"`,
             timestamp: new Date(),
-          })
+          });
           project.currentFile = null;
+
+          // Necesario cuando se modifican propiedades dinámicas en esquemas Mongoose
+          // Mongoose es estricto con los cambios en campos "Mixed" (como 'files').
+          // Sin markModified("files"), Mongoose podría pensar que el objeto no cambió y no guardar nada.
           project.markModified("files");
           await project.save();
         }
       }
-    })
+    });
 
+    // --- FINALIZACIÓN EXITOSA ---
+    // Marca el proyecto como completado y establece versión inicial.
     console.log(`[Background AI] Successfully generated for project ${projectId}`);
     const project = await Project.findById(projectId);
     if (project) {
       project.status = "completed";
       project.version = 1;
       if (result.description) {
-        project.name = result.description
+        project.name = result.description;
       }
       project.messages.push({
         role: "assistant",
         content: "Website generation complete! You can view and edit the files.",
         timestamp: new Date(),
-      })
-
+      });
       await project.save();
     }
 
   } catch (err) {
+    // --- MANEJO DE ERRORES GLOBALES ---
+    // Si algo falla de forma no recuperable, marca el proyecto como "failed"
+    // y persiste el error en el historial de mensajes para que el usuario lo vea.
     console.log(`[Background AI] Generation failed for project ${projectId}:`, err);
     await Project.findByIdAndUpdate(projectId, {
       status: "failed",
@@ -146,8 +192,7 @@ async function runBackgroundGeneration(projectId, prompt) {
           timestamp: new Date(),
         }
       }
-    })
-
+    });
   }
 }
 
