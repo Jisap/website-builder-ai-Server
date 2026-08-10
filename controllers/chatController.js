@@ -75,10 +75,11 @@ export async function chat(req, res) {
 
     console.log(
       `[AI] Revising project ${project._id}: "${prompt.slice(0, 80)}...` +
-      `(${manifest.length} files, manifest - ${json.stringify(manifest).length} chars)`
+      `(${manifest.length} files, manifest - ${JSON.stringify(manifest).length} chars)`
     )
 
-    // Call AI pasándole el prompt, el manifiesto, el historial y los archivos.
+    // Llama a la AI pasándole el prompt, el manifiesto, el historial y los archivos.
+    // Esta devuelve un result con una lista de operations (qué cambios hacer) y una description.
     const result = await reviseProject(
       prompt,
       manifest,
@@ -88,14 +89,19 @@ export async function chat(req, res) {
 
     console.log(`[AI] Got ${result.operations.length} operations: ${result.description}`);
 
-    // Apply operation to file map
+    // Aplica los cambios con applyOperations, que toma los archivos originales y las operaciones, 
+    // y devuelve los archivos actualizados más una lista de errores si alguna operación falló.
     const { files: updatedFiles, applied, errors } = applyOperations(project.files, result.operations);
 
     if (errors.length > 0) {
       console.warn(`[Diff] Errors applying operations:`, errors);
     }
 
-    //update project in DB
+    // Guarda todo 
+    // - archivos nuevos, 
+    // - versión incrementada, 
+    // - estado "completed", 
+    // - y un mensaje del asistente con la descripción (y los errores, si los hubo).
     project.files = updatedFiles;
     project.markModified("files");
     project.version += 1;
@@ -107,7 +113,8 @@ export async function chat(req, res) {
     });
     await project.save();
 
-    // Return updated project
+    // Devuelve el proyecto actualizado, con el mapa de archivos plano (sin el hash) 
+    // para facilitar el uso en el frontend.
     const filesObj = {};
     for (const [path, entry] of Object.entries(project.files)) {
       filesObj[path] = entry.content
