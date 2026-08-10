@@ -91,7 +91,7 @@ export async function generateProject(prompt, callbacks) {
     });
 
     // Aseguramos que los archivos base críticos siempre existan en el plan
-    if (!plan.files.find((f) => f.path === "/App.js")) {
+    if (!plan.files.find((f) => f.path === "/App.js")) { //Si no existe App.js en el plan se agrega al principio
         plan.files.unshift({
             path: "/App.js",
             description: "Main application entry point",
@@ -100,7 +100,7 @@ export async function generateProject(prompt, callbacks) {
         });
     }
 
-    if (!plan.files.find((f) => f.path === "/styles.css")) {
+    if (!plan.files.find((f) => f.path === "/styles.css")) { //Si no existe styles.css en el plan se agrega al final
         plan.files.push({
             path: "/styles.css",
             description: "Global CSS: Google Font import, keyframe animations, utility classes",
@@ -109,7 +109,7 @@ export async function generateProject(prompt, callbacks) {
         });
     }
 
-    if (callbacks?.onPlan) {
+    if (callbacks?.onPlan) { //Callback para reportar el plan al frontend
         await callbacks.onPlan(plan);
     }
 
@@ -117,10 +117,10 @@ export async function generateProject(prompt, callbacks) {
     console.log(`[AI] Phase 2: Generating ${plan.files.length} files in parallel (concurrency=${MAX_CONCURRENCY}): ${plan.files.map((f) => f.path).join(", ")}`);
 
     const files = {};
-    let pendingFiles = plan.files.map((f) => ({ ...f })); // Copia para poder mutar la lista de pendientes
-    const maxRetryRounds = 2; // Rondas extra para reintentar archivos que fallaron por errores de red o de la IA
+    let pendingFiles = plan.files.map((f) => ({ ...f }));   // Copia para poder mutar la lista de pendientes
+    const maxRetryRounds = 2;                               // Rondas extra para reintentar archivos que fallaron por errores de red o de la IA
 
-    for (let round = 0; round <= maxRetryRounds; round++) {
+    for (let round = 0; round <= maxRetryRounds; round++) { //Bucle para reintentar archivos que fallaron por errores de red o de la IA
         if (pendingFiles.length === 0) break;
 
         if (round > 0) {
@@ -130,16 +130,16 @@ export async function generateProject(prompt, callbacks) {
         }
 
         // Ejecutamos las promesas limitando cuántas corren al mismo tiempo (MAX_CONCURRENCY)
-        const results = await pMap(
+        const results = await pMap( 
             pendingFiles,
             async (file) => {
                 try {
-                    if (callbacks?.onFileStart) await callbacks.onFileStart(file.path);
+                    if (callbacks?.onFileStart) await callbacks.onFileStart(file.path);                          // Callback para reportar el inicio de la generación del archivo
 
                     // Pasamos los 'files' ya generados para que la IA tenga contexto
                     const singleResult = await generateSingleFile(file, plan.files, prompt, files);
 
-                    if (callbacks?.onFileComplete) await callbacks.onFileComplete(file.path, singleResult.code);
+                    if (callbacks?.onFileComplete) await callbacks.onFileComplete(file.path, singleResult.code); // Callback para reportar el final de la generación del archivo
                     return { success: true, file, result: singleResult };
                 } catch (err) {
                     return { success: false, file, error: err };
@@ -170,7 +170,7 @@ export async function generateProject(prompt, callbacks) {
         console.error(`[AI] Failed to generate ${pendingFiles.length} files after all retry rounds: ${failedPaths}`);
 
         // [CORRECCIÓN DE BUG]: Iteramos sobre los archivos fallidos para crear un componente "Placeholder".
-        // En tu código original, 'file' no estaba definido en este scope, lo que causaba un crash.
+        // En el código original, 'file' no estaba definido en este scope, lo que causaba un crash.
         for (const file of pendingFiles) {
             const ext = file.path.split(".").pop()?.toLowerCase();
 
