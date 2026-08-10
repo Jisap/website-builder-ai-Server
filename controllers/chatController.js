@@ -1,4 +1,4 @@
-import { json } from "zod";
+//import { json } from "zod";
 import { Project } from "../models/Projects.js";
 import { reviseProject } from "../services/ai";
 import { applyOperations } from "../services/diff.js";
@@ -20,9 +20,10 @@ export function buildManifest(files) {
 
 // POST /api/projects/:id/chat
 // Send a revision prompt and return updated project.
-export async function chat(req, es) {
+export async function chat(req, res) {
   const { prompt } = req.body;
 
+  // Comprueba que venga un prompt válido y que el usuario esté autenticado.
   if (!prompt || typeof prompt !== "string") {
     res.status(400).json({ error: "prompt is required" })
     return
@@ -32,6 +33,7 @@ export async function chat(req, es) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  // Busca el proyecto asociado a ese usuario. Si no existe, devuelve error 404.
   const project = await Project.findOne({
     _id: req.params.id,
     owner: req.user.userId,
@@ -42,7 +44,9 @@ export async function chat(req, es) {
     return
   }
 
-  // Set status to revising and save user prompt inmmediatly
+  // Guarda el mensaje del usuario de inmediato.
+  // Se hace fuera del try, para que si algo falla después, quede constancia de que el usuario pidió 
+  // el cambio y el proyecto se marque como "revising".
   project.status = "revising"
   project.messages.push({
     role: "user",
@@ -51,17 +55,19 @@ export async function chat(req, es) {
   });
   await project.save()
 
+  // Se prepara el contexto para la IA
   try {
-    // Build compact manifest (path + hash + size) instead of sending all code
+    // manifest Genera un resumen liviano de cada archivo (ruta, hash, tamaño), sin el contenido completo.
     const manifest = buildManifest(project.files)
 
-    // Include all file contents so the AI can do accurate search/replace
+    // En cambio relevantFiles, este sí manda el contenido completo de todos los archivos 
+    // para que la IA pueda hacer "search/replace" preciso.
     const relevantFiles = {};
     for (const [path, entry] of Object.entries(project.files)) {
       relevantFiles[path] = entry.content
     }
 
-    // Recent messages for context (last 4 max)
+    // recentMessages son los últimos 4 mensajes del historial, para darle contexto conversacional a la IA.
     const recentMessages = project.messages.slice(-4).map((m) => ({
       role: m.role,
       content: m.content
@@ -72,7 +78,7 @@ export async function chat(req, es) {
       `(${manifest.length} files, manifest - ${json.stringify(manifest).length} chars)`
     )
 
-    // Call AI with manifest + relevant files.
+    // Call AI pasándole el prompt, el manifiesto, el historial y los archivos.
     const result = await reviseProject(
       prompt,
       manifest,
