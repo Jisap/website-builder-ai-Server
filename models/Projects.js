@@ -3,8 +3,8 @@ import { Schema, model } from "mongoose"
 
 
 const MessageSchema = new Schema({
-    role: { type: String, enum: ["user", "assistant"], rquired: true },
-    content: { type: String, rquired: true },
+    role: { type: String, enum: ["user", "assistant"], required: true },
+    content: { type: String, required: true },
     timestamp: { type: Date, default: Date.now() }
 }, { _id: false });
 

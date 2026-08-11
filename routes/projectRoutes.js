@@ -10,8 +10,9 @@ import {
     publishProject,
     getPublicProject
 } from "../controllers/projectController.js";
-import { authMiddleware } from "../middleware/auth.js";
+
 import { chat } from "../controllers/chatController.js";
+import { authMiddleware } from "../middleware/authMiddleware.js";
 
 const projectRouter = Router();
 

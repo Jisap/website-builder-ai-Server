@@ -8,11 +8,10 @@ const UserSchema = new Schema({
 }, { timestamps: true })
 
 // Hashea la contraseña antes de guardar
-UserSchema.pre('save', async function (next) {
-    if (!this.isModified('password')) return next();
+UserSchema.pre('save', async function () {
+    if (!this.isModified('password')) return;
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt); // this.password = "version del alogaritmo bcrypt + num de rondas + salt (codigo aleatorio) + hash de la contraseña (encryptacion de la password)
-    next();
 })
 
 // Compara la contraseña
