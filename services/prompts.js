@@ -254,12 +254,13 @@ Operation types:
 - "delete": Remove a file
 
 CRITICAL RULES for "update" operations:
-- The "search" string must be a VERBATIM copy of the existing code (including whitespace/indentation)
-- Keep search blocks as small as possible (just the lines that change + minimal surrounding context for uniqueness)
-- If you need to see a file's content to make changes, say so in description and I'll provide it
-- Prefer targeted search/replace over recreating entire files
+- PRESERVE EXISTING COMPONENTS AND FUNCTIONALITY. Never destroy, delete, or replace existing UI components, logic, or structure unless explicitly requested by the user.
+- For style/color/theme changes: modify ONLY the CSS classes/styles in the existing elements or edit /styles.css. Do NOT delete or rewrite the components.
+- The "search" string must be a VERBATIM copy of the existing code (including whitespace/indentation).
+- Keep search blocks as small as possible (just the single line or small block that changes).
+- Prefer targeted search/replace over recreating entire files.
 
-Be minimal: only touch files that NEED to change.`;
+Be minimal and surgical: only touch lines that NEED to change.`;
 
 export const FILE_PLAN_SYSTEM = `${BASE_SYSTEM}
 

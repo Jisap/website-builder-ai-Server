@@ -29,9 +29,30 @@ export function applyOperations(currentFiles, operations) {
         case "update": {
           const existing = files[op.path];
           if (!existing) {
+            // If update file doesn't exist yet, auto-convert to create if content or replace is provided
+            const newCode = op.content || op.replace;
+            if (newCode) {
+              files[op.path] = {
+                content: newCode,
+                hash: hashContent(newCode),
+              };
+              applied.push(`created (fallback) ${op.path}`);
+              break;
+            }
             errors.push(`update ${op.path}: file not found`);
             break;
           }
+
+          // Fallback 1: If full content is provided for update, use it directly
+          if (op.content && op.content.trim().length > 0) {
+            files[op.path] = {
+              content: op.content,
+              hash: hashContent(op.content),
+            };
+            applied.push(`updated (full rewrite) ${op.path}`);
+            break;
+          }
+
           if (!op.search || op.replace == null) {
             errors.push(`update ${op.path}: missing search/replace`);
             break;
@@ -40,7 +61,7 @@ export function applyOperations(currentFiles, operations) {
           const newContent = searchReplace(existing.content, op.search, op.replace);
 
           if (newContent === null) {
-            errors.push(`update ${op.path}: search string not found`);
+            errors.push(`update ${op.path}: search string not found in file content`);
             break;
           }
 
@@ -73,33 +94,40 @@ export function applyOperations(currentFiles, operations) {
   return { files, applied, errors };
 }
 
-// Search and replace code with fallback whitespace normalization matching
+// Search and replace code with fallback whitespace and fuzzy-matching
 function searchReplace(content, search, replace) {
-  // 1. Try exact match
+  if (!search || !content) return null;
+
+  // 1. Exact match
   if (content.includes(search)) {
     return content.replace(search, () => replace);
   }
 
-  // 2. Try with normalized whitespace (collapse multiple spaces/tabs, trim lines)
+  // 2. Trimmed exact match
+  const searchTrimmed = search.trim();
+  if (searchTrimmed && content.includes(searchTrimmed)) {
+    return content.replace(searchTrimmed, () => replace);
+  }
+
+  // 3. Normalize whitespace (collapse spaces/tabs, ignore empty lines)
   const normalizeWs = (s) =>
     s
       .split("\n")
       .map((line) => line.replace(/\s+/g, " ").trim())
-      .join("\n")
-      .trim();
+      .filter(Boolean)
+      .join("\n");
 
   const normalizedContent = normalizeWs(content);
   const normalizedSearch = normalizeWs(search);
 
-  if (normalizedContent.includes(normalizedSearch)) {
-    // Find the original substring by matching line-by-line
-    const searchLines = normalizedSearch.split("\n");
+  if (normalizedSearch && normalizedContent.includes(normalizedSearch)) {
+    const searchLines = search.split("\n").map((l) => l.trim()).filter(Boolean);
     const contentLines = content.split("\n");
 
     for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
       let match = true;
       for (let j = 0; j < searchLines.length; j++) {
-        if (normalizeWs(contentLines[i + j]) !== searchLines[j]) {
+        if (contentLines[i + j].trim() !== searchLines[j]) {
           match = false;
           break;
         }
@@ -109,6 +137,17 @@ function searchReplace(content, search, replace) {
         const after = contentLines.slice(i + searchLines.length);
         return [...before, replace, ...after].join("\n");
       }
+    }
+  }
+
+  // 4. Single-line fuzzy match
+  if (!search.includes("\n")) {
+    const searchClean = search.replace(/\s+/g, "").toLowerCase();
+    const contentLines = content.split("\n");
+    const matchIndex = contentLines.findIndex((line) => line.replace(/\s+/g, "").toLowerCase().includes(searchClean));
+    if (matchIndex !== -1) {
+      contentLines[matchIndex] = replace;
+      return contentLines.join("\n");
     }
   }
 

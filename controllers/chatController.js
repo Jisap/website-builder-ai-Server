@@ -84,9 +84,9 @@ export async function chat(req, res) {
     const result = await reviseProject(
       prompt,
       manifest,
-      recentMessages,
-      relevantFiles
-    )
+      relevantFiles,
+      recentMessages
+    );
 
     console.log(`[AI] Got ${result.operations.length} operations: ${result.description}`);
 
