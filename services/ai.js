@@ -7,24 +7,119 @@
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 import pMap from "p-map"; // Utilidad para procesar Promesas en paralelo con límite de concurrencia
 import { FileCodeSchema, FilePlanSchema, RevisionResultSchema } from './aiSchemas.js';
 import { buildFileCodeSystem, FILE_PLAN_SYSTEM, REVISE_SYSTEM } from './prompts.js';
 import { normalizeContent } from './contentNormalizer.js';
 import { validateAndFixCode, validateRevisionContent } from './codeValidator.js';
 
-// --- Configuración del Cliente de IA (OpenRouter) ---
-// Se toma el modelo de las variables de entorno o se usa un modelo gratuito por defecto.
-const MODEL = process.env.OPENROUTER_MODEL || "openrouter/free";
-const MAX_CONCURRENCY = parseInt(process.env.AI_MAX_CONCURRENCY || "6", 10);
+// --- Configuración del Cliente de IA (OpenRouter / NVIDIA NIM) ---
+const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.NVIDIA_API_KEY ? "nvidia" : "openrouter");
+const MAX_CONCURRENCY = parseInt(process.env.AI_MAX_CONCURRENCY || "1", 10);
+const AI_TIMEOUT_MS = parseInt(process.env.AI_TIMEOUT_MS || "180000", 10); // 180s default timeout per AI call
 
-const openrouter = createOpenAI({
-    baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY,
-});
+let mainClient;
+let MODEL;
 
-const model = openrouter(MODEL);
+if (AI_PROVIDER === "nvidia") {
+    MODEL = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+    mainClient = createOpenAI({
+        baseURL: "https://integrate.api.nvidia.com/v1",
+        apiKey: process.env.NVIDIA_API_KEY,
+        compatibility: "compatible", // Forzar uso de /chat/completions estándar de OpenAI
+    });
+    console.log(`[AI] Initialized NVIDIA NIM provider with model: ${MODEL}`);
+} else {
+    MODEL = process.env.OPENROUTER_MODEL || "openrouter/auto";
+    mainClient = createOpenAI({
+        baseURL: "https://openrouter.ai/api/v1",
+        apiKey: process.env.OPENROUTER_API_KEY,
+    });
+    console.log(`[AI] Initialized OpenRouter provider with model: ${MODEL}`);
+}
+
+// Fallback model chain: if using OpenRouter, fall back across openrouter models; 
+// if using NVIDIA, define fallbacks or use single model.
+const FALLBACK_MODELS = (process.env.AI_FALLBACK_MODELS || [
+    "poolside/laguna-xs-2.1:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "cohere/north-mini-code:free",
+].join(",")).split(",").map((m) => m.trim()).filter(Boolean);
+
+// Build the primary model instance using chat completions endpoint
+const model = mainClient.chat(MODEL);
+
+async function generateCleanObject({ model, schema, system, prompt, maxRetries = 2 }) {
+    let lastError = null;
+
+    // Build list of models to try: primary first, then fallbacks (if openrouter)
+    const modelChain = [model];
+    if (AI_PROVIDER === "openrouter") {
+        modelChain.push(...FALLBACK_MODELS.map((m) => mainClient.chat(m)));
+    }
+
+    for (let modelIdx = 0; modelIdx < modelChain.length; modelIdx++) {
+        const currentModel = modelChain[modelIdx];
+        const isFirstModel = modelIdx === 0;
+        if (!isFirstModel) {
+            console.log(`[AI generateCleanObject] Switching to fallback model ${modelIdx}/${FALLBACK_MODELS.length}: ${FALLBACK_MODELS[modelIdx - 1]}`);
+        }
+
+        for (let retry = 0; retry <= maxRetries; retry++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                controller.abort();
+                console.warn(`[AI generateCleanObject] Request timed out after ${AI_TIMEOUT_MS}ms (model=${modelIdx}, attempt ${retry + 1})`);
+            }, AI_TIMEOUT_MS);
+
+            try {
+                const { text } = await generateText({
+                    model: currentModel,
+                    system: (system || "") + "\nIMPORTANT: Respond ONLY with a valid JSON object matching the schema. Do NOT wrap in ```json ``` markdown codeblock.",
+                    prompt,
+                    abortSignal: controller.signal,
+                });
+
+                clearTimeout(timeoutId);
+
+                let cleaned = text.trim();
+                if (cleaned.startsWith("```")) {
+                    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+                }
+
+                const firstBrace = cleaned.indexOf("{");
+                const lastBrace = cleaned.lastIndexOf("}");
+                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+                }
+
+                const parsedJson = JSON.parse(cleaned);
+                const validated = schema.parse(parsedJson);
+                return { object: validated };
+            } catch (err) {
+                clearTimeout(timeoutId);
+                const isTimeout = err.name === "AbortError" || err.message?.includes("aborted");
+                const isProviderError = err.message?.includes("Provider returned error") || err.message?.includes("AI_APICallError");
+                console.warn(`[AI generateCleanObject] model=${modelIdx} attempt ${retry + 1} failed${isTimeout ? " (timeout)" : isProviderError ? " (provider error)" : ""}: ${err.message}`);
+                lastError = err;
+
+                // On a provider error, skip remaining retries for this model and try the next fallback
+                if (isProviderError) {
+                    console.warn(`[AI generateCleanObject] Provider error on model ${modelIdx}, escalating to next fallback.`);
+                    break; // break inner retry loop → advance modelIdx
+                }
+
+                if (retry < maxRetries) {
+                    const delay = 5000 * (retry + 1); // 5s, 10s backoff between retries (avoids rate-limits on free models)
+                    console.log(`[AI generateCleanObject] Waiting ${delay / 1000}s before retry ${retry + 2}...`);
+                    await new Promise((r) => setTimeout(r, delay));
+                }
+            }
+        }
+    }
+    throw lastError;
+}
 
 /**
  * Genera el código fuente para un único archivo del proyecto.
@@ -44,7 +139,7 @@ async function generateSingleFile(file, allFiles, prompt, alreadyGeneratedFiles)
     console.log(`[AI] Creating file: ${file.path}...`);
     
     // Llamada a la IA forzando la salida al esquema Zod 'FileCodeSchema'
-    const { object } = await generateObject({
+    const { object } = await generateCleanObject({
         model,
         schema: FileCodeSchema,
         system,
@@ -82,7 +177,7 @@ async function generateSingleFile(file, allFiles, prompt, alreadyGeneratedFiles)
 export async function generateProject(prompt, callbacks) {
     // --- FASE 1: Planificación de archivos ---
     console.log(`[AI] Phase 1: Planning file structure for: "${prompt.slice(0, 80)}..."`);
-    const { object: plan } = await generateObject({
+    const { object: plan } = await generateCleanObject({
         model,
         schema: FilePlanSchema,
         system: FILE_PLAN_SYSTEM,
@@ -239,7 +334,7 @@ export async function reviseProject(prompt, manifest, relevantFiles, recentMessa
 
     console.log("[AI] Revising project...");
 
-    const { object: rawParsed } = await generateObject({
+    const { object: rawParsed } = await generateCleanObject({
         model,
         schema: RevisionResultSchema,
         system: REVISE_SYSTEM,

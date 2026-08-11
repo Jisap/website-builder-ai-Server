@@ -10,6 +10,18 @@ export function validateAndFixCode(code, filePath, context) {
     const isCSS = filePath.endsWith(".css");
     const isJS = filePath.endsWith(".js") || filePath.endsWith(".jsx");
 
+    // 0. Safety-net: decode any remaining literal escape sequences (\\n \\t)
+    //    that survived JSON parsing / normalizeContent. This prevents the
+    //    Babel "Expecting Unicode escape sequence \uXXXX" SyntaxError.
+    if (/\\n|\\t/.test(code)) {
+        code = code
+            .replace(/\\\\/g, "%%DQUOTE_BACKSLASH%%")
+            .replace(/\\n/g, "\n")
+            .replace(/\\t/g, "\t")
+            .replace(/%%DQUOTE_BACKSLASH%%/g, "\\");
+        warnings.push(`${filePath}: Decoded residual literal escape sequences (\\n, \\t)`);
+    }
+
     // 1. Strip markdown code fences that some models wrap around code
     const fencePattern = /^```(?:jsx?|javascript|css|html|tsx?|react)?\s*\n([\s\S]*?)\n```\s*$/;
     const fenceMatch = code.match(fencePattern);

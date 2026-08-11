@@ -35,11 +35,11 @@ export async function createProject(req, res) {
       }
     ],
     version: 0,
-    ownerId: req.user.userId,
+    owner: req.user.userId,
     status: "pending",
     filesPlanned: [],
     filesGenerated: [],
-    currentFile: [],
+    currentFile: null,
     error: null,
   });
 
@@ -204,7 +204,7 @@ export async function listProjects(req, res) {
   }
 
   const projects = await Project.find(
-    { ownerId: req.user.userId },
+    { owner: req.user.userId },
     { name: 1, description: 1, version: 1, createdAt: 1, updatedAt: 1 }
   ).sort({ updatedAt: -1 });
 
@@ -220,7 +220,7 @@ export async function getProject(req, res) {
 
   const project = await Project.findOne({
     _id: req.params.id,
-    ownerId: req.user.userId,
+    owner: req.user.userId,
   });
 
   if (!project) {
@@ -258,7 +258,7 @@ export async function deleteProject(req, res) {
 
   const result = await Project.findOneAndDelete({
     _id: req.params.id,
-    ownerId: req.user.userId,
+    owner: req.user.userId,
   });
 
   if (!result) {
@@ -284,7 +284,7 @@ export async function updateProjectFiles(req, res) {
 
   const project = await Project.findOne({
     _id: req.params.id,
-    ownerId: req.user.userId,
+    owner: req.user.userId,
   })
 
   if (!project) {
@@ -328,7 +328,7 @@ export async function publishProject(req, res) {
   }
 
   const project = await Project.findOneAndUpdate(
-    { _id: req.params.id, ownerId: req.user.userId },
+    { _id: req.params.id, owner: req.user.userId },
     { status: "published" },
     { returnDocument: "after" }
   );
@@ -343,7 +343,7 @@ export async function publishProject(req, res) {
 // GET /api/projects/oublic/:id
 // Get a publicy published project details (without auth)
 export async function getPublicProject(req, res) {
-  const project = await project.findByid(req.params.id)
+  const project = await Project.findById(req.params.id)
   if (!project) {
     res.status(404).json({ message: "Project not found" });
     return;
